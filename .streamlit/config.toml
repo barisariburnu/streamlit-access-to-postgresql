@@ -1,0 +1,27 @@
+[theme]
+primaryColor = "#F63366"
+backgroundColor = "#0E1117"
+secondaryBackgroundColor = "#262730"
+textColor = "#FAFAFA"
+font = "sans serif"
+base = "dark"  # Sets dark mode as default
+
+[browser]
+gatherUsageStats = false
+
+[server]
+enableCORS = false
+enableXsrfProtection = true
+
+[ui]
+hideTopBar = true  # Hides the deploy menu and other options
+
+[client]
+toolbarMode = "minimal"  # Minimizes the toolbar
+showErrorDetails = false  # Hides detailed error messages from users
+
+[runner]
+magicEnabled = false  # Disables Streamlit's "magic" commands
+
+[logger]
+level = "info"
