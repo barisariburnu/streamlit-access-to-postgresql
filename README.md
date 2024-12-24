@@ -13,37 +13,50 @@ This Streamlit application facilitates the transfer of data from Microsoft Acces
 - Dark mode interface
 - Secure configuration management
 
-## Prerequisites
+## Technical Stack
 
-- Python 3.8 or higher
-- Microsoft Access Database Engine (for reading .mdb files)
-- PostgreSQL Server
-- Windows OS (due to Access Database Engine requirement)
+- **Frontend**: Streamlit
+- **Backend**: Python 3.10+
+- **Databases**: Microsoft Access, PostgreSQL
+- **Containerization**: Docker
 
 ## Installation
 
-1. Clone the repository:
+1. Install Docker and Docker Compose:
+```bash
+# Add Docker repository
+sudo dnf config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
+
+# Install Docker and Docker Compose
+sudo dnf install docker-ce docker-ce-cli containerd.io docker-compose-plugin -y
+
+# Start and enable Docker service
+sudo systemctl start docker
+sudo systemctl enable docker
+```
+
+2. Configure firewall:
+```bash
+# Install firewall if not installed
+sudo dnf install firewalld -y
+
+# Start and enable firewall service
+sudo systemctl start firewalld
+sudo systemctl enable firewalld
+
+# Open port 8501 for Streamlit
+sudo firewall-cmd --permanent --add-port=8501/tcp
+sudo firewall-cmd --reload
+
+# Verify open ports
+sudo firewall-cmd --list-ports
+```
+
+3. Clone the repository:
 ```bash
 git clone https://github.com/yourusername/streamlit-access-to-postgresql.git
 cd streamlit-access-to-postgresql
 ```
-
-2. Create and activate a virtual environment:
-```bash
-python -m venv venv
-venv\Scripts\activate  # Windows
-source venv/bin/activate  # Linux/Mac
-```
-
-3. Install required packages:
-```bash
-pip install -r requirements.txt
-```
-
-4. Install Microsoft Access Database Engine:
-   - Download the appropriate version (32-bit or 64-bit) from Microsoft's website
-   - Run the installer
-   - Make sure it matches your Python architecture (32/64-bit)
 
 ## Configuration
 
@@ -68,20 +81,50 @@ upload_folder = "uploads"
 
 3. The application will automatically create an `uploads` directory for temporary file storage.
 
-## Usage
+## Project Structure
 
-1. Start the application:
-```bash
-streamlit run app.py
+```
+project/
+├── .gitignore
+├── .streamlit/
+│   ├── config.toml        # Streamlit UI configuration
+│   └── secrets.toml       # Sensitive configuration data
+├── app.py                 # Main application
+├── config.py             # Configuration management
+├── requirements.txt      # Project dependencies
+└── uploads/             # Upload directory
 ```
 
-2. Open your web browser and navigate to the provided URL (typically `http://localhost:8501`)
+## Usage
+
+1. Start the application with Docker:
+```bash
+sudo docker-compose up -d --build
+```
+
+2. Access the application at `http://your-server-ip:8501`
 
 3. Upload an Access database file (.mdb)
 
 4. Click "Start Transfer" to begin the transfer process
 
 5. Monitor the progress and check the results in the detailed report
+
+## Docker Commands
+
+```bash
+# View application logs
+sudo docker-compose logs -f
+
+# Stop the application
+sudo docker-compose down
+
+# Restart the application
+sudo docker-compose restart
+
+# Rebuild and start
+sudo docker-compose up -d --build
+```
 
 ## Special Features
 
@@ -107,36 +150,22 @@ For these tables, the application:
 If you encounter PostgreSQL connection errors:
 1. Verify PostgreSQL server is running
 2. Check firewall settings for port 5432
-3. Verify PostgreSQL connection settings in `secrets.toml`
+3. Verify PostgreSQL connection settings in `.streamlit/secrets.toml`
 4. Ensure PostgreSQL user has appropriate permissions
 
 ### Access Database Engine Issues
 If you see "No Access driver found" error:
-1. Verify Microsoft Access Database Engine is installed
-2. Ensure Python and Access Database Engine architectures match
-3. Restart your system after installing the Access Database Engine
+1. Verify Microsoft Access Database Engine is installed in the Docker container
+2. Check Docker build logs for any installation errors
+3. Ensure proper configuration in Dockerfile
 
 ## Security Considerations
 
-- Sensitive configuration is stored in `secrets.toml`
+- Sensitive configuration is stored in `.streamlit/secrets.toml`
 - Temporary files are automatically cleaned up
 - Database credentials are never exposed in the interface
 - File size limits prevent server overload
 - CORS and XSRF protections enabled
-
-## Project Structure
-
-```
-project/
-├── .gitignore
-├── .streamlit/
-│   ├── config.toml        # Streamlit UI configuration
-│   └── secrets.toml       # Sensitive configuration data
-├── app.py                 # Main application
-├── config.py             # Configuration management
-├── requirements.txt      # Project dependencies
-└── uploads/             # Upload directory
-```
 
 ## Contributing
 
