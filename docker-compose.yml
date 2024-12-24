@@ -1,0 +1,9 @@
+services:
+  streamlit_access_to_postgresql:
+    build: .
+    container_name: streamlit_access_to_postgresql
+    restart: always
+    ports:
+      - "8501:8501"
+    volumes:
+      - .:/usr/src/app
