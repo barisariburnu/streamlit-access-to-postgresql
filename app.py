@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-import pyodbc
 from sqlalchemy import create_engine, text
 import os
 import warnings
@@ -9,6 +8,7 @@ import logging
 from typing import List, Dict, Any
 from config import config
 import psycopg2
+import subprocess
 from sqlalchemy.exc import SQLAlchemyError
 
 # Set up detailed logging
@@ -58,26 +58,58 @@ def check_file_size(file) -> bool:
         logger.error(f"Error checking file size: {str(e)}")
         return False
 
-def check_access_driver() -> str:
-    """Check for available Access drivers."""
+def check_mdb_tools():
+    """Check if mdbtools is installed and available."""
     try:
-        drivers = [x for x in pyodbc.drivers() if 'access' in x.lower()]
-        logger.info(f"Available drivers: {drivers}")
-        if not drivers:
-            raise RuntimeError("No Access driver found. Please install Microsoft Access Database Engine.")
-        return drivers[0]
+        result = subprocess.run(['mdb-tables', '--version'], 
+                              capture_output=True, 
+                              text=True)
+        if result.returncode != 0:
+            raise RuntimeError("MDBTools not found. Please install MDBTools.")
+        logger.info("MDBTools found successfully")
+        return True
+    except FileNotFoundError:
+        logger.error("MDBTools not installed")
+        raise RuntimeError("MDBTools not installed")
     except Exception as e:
-        logger.error(f"Error checking Access driver: {str(e)}")
+        logger.error(f"Error checking MDBTools: {str(e)}")
+        raise
+
+def get_tables(mdb_path: str) -> List[str]:
+    """Get list of tables from MDB file using mdb-tables."""
+    try:
+        result = subprocess.run(['mdb-tables', '-1', mdb_path],
+                              capture_output=True,
+                              text=True)
+        if result.returncode != 0:
+            raise RuntimeError(f"Error getting tables: {result.stderr}")
+        
+        tables = result.stdout.strip().split('\n')
+        return [t for t in tables if t]  # Remove empty strings
+    except Exception as e:
+        logger.error(f"Error getting tables: {str(e)}")
+        raise
+
+def export_table_to_csv(mdb_path: str, table: str, output_path: str):
+    """Export a single table to CSV using mdb-export."""
+    try:
+        result = subprocess.run(['mdb-export', mdb_path, table],
+                              capture_output=True,
+                              text=True)
+        if result.returncode != 0:
+            raise RuntimeError(f"Error exporting table: {result.stderr}")
+        
+        with open(output_path, 'w') as f:
+            f.write(result.stdout)
+        
+    except Exception as e:
+        logger.error(f"Error exporting table {table}: {str(e)}")
         raise
 
 def transfer_mdb_to_postgresql(mdb_path: str) -> List[Dict[str, Any]]:
-    """Transfer data from Access database to PostgreSQL."""
+    """Transfer data from Access database to PostgreSQL using MDBTools."""
     results = []
-    conn = None
     pg_engine = None
-    
-    # Special tables requiring ID control
-    id_controlled_tables = ['unmovablemaincins', 'unmovablecins']
     
     try:
         logger.info(f"Starting transfer from {mdb_path}")
@@ -87,36 +119,20 @@ def transfer_mdb_to_postgresql(mdb_path: str) -> List[Dict[str, Any]]:
         if not pg_success:
             raise RuntimeError(f"PostgreSQL connection test failed: {pg_message}")
         
-        # Check for Access driver
-        driver = check_access_driver()
-        logger.info(f"Using driver: {driver}")
-        
-        # Create connection string
-        conn_str = (
-            f'DRIVER={{{driver}}};'
-            f'DBQ={os.path.abspath(mdb_path)};'
-        )
-        
-        # Connect to Access database
-        conn = pyodbc.connect(conn_str)
-        logger.info("Connected to Access database")
+        # Check for MDBTools
+        check_mdb_tools()
         
         # Get tables
-        cursor = conn.cursor()
-        tables = [row.table_name for row in cursor.tables(tableType='TABLE')]
+        tables = get_tables(mdb_path)
         logger.info(f"Found {len(tables)} tables: {tables}")
         
         if not tables:
             raise ValueError("No tables found in the database")
         
-        # Create PostgreSQL engine with extended logging
-        logger.info(f"Creating PostgreSQL engine with connection string: {config.PG_CONNECTION_STRING}")
-        pg_engine = create_engine(
-            config.PG_CONNECTION_STRING,
-            echo=True  # Enable SQLAlchemy logging
-        )
+        # Create PostgreSQL engine
+        pg_engine = create_engine(config.PG_CONNECTION_STRING)
         
-        # Process each table with progress bar
+        # Process each table
         progress_bar = st.progress(0)
         status_text = st.empty()
         
@@ -125,10 +141,17 @@ def transfer_mdb_to_postgresql(mdb_path: str) -> List[Dict[str, Any]]:
                 status_text.text(f"Processing table: {table}")
                 logger.info(f"Starting to process table: {table}")
                 
-                # Read from Access
-                query = f"SELECT * FROM [{table}]"
-                df = pd.read_sql(query, conn)
-                logger.info(f"Read {len(df)} rows from Access table {table}")
+                # Export to CSV temporarily
+                temp_csv = f"/tmp/{table}.csv"
+                export_table_to_csv(mdb_path, table, temp_csv)
+                
+                # Read CSV into DataFrame
+                df = pd.read_csv(temp_csv, low_memory=False)
+                logger.info(f"Read {len(df)} rows from table {table}")
+                
+                # Remove temporary CSV
+                if os.path.exists(temp_csv):
+                    os.remove(temp_csv)
                 
                 if df.empty:
                     results.append({
@@ -139,57 +162,14 @@ def transfer_mdb_to_postgresql(mdb_path: str) -> List[Dict[str, Any]]:
                     })
                     continue
                 
+                # Write to PostgreSQL
                 table_lower = table.lower()
-                
-                # Log column information
-                logger.info(f"Columns in table {table}: {df.columns.tolist()}")
-                logger.info(f"Column types in table {table}: {df.dtypes.to_dict()}")
-                
-                # Special processing for ID-controlled tables
-                if table_lower in id_controlled_tables:
-                    with pg_engine.connect() as connection:
-                        try:
-                            # Check if table exists
-                            table_exists = connection.execute(text(
-                                f"SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = '{table_lower}')"
-                            )).scalar()
-
-                            if table_exists:
-                                # Get existing IDs
-                                existing_ids = pd.read_sql(f"SELECT id FROM {table_lower}", connection)
-                                
-                                if not existing_ids.empty:
-                                    df = df[~df['ID'].isin(existing_ids['id'])]
-                                
-                                if not df.empty:
-                                    df.to_sql(
-                                        name=table_lower,
-                                        con=pg_engine,
-                                        if_exists='append',
-                                        index=False
-                                    )
-                            else:
-                                df.to_sql(
-                                    name=table_lower,
-                                    con=pg_engine,
-                                    if_exists='replace',
-                                    index=False
-                                )
-                        except SQLAlchemyError as e:
-                            logger.error(f"SQLAlchemy error processing table {table}: {str(e)}")
-                            raise
-                else:
-                    # Normal append for other tables with error handling
-                    try:
-                        df.to_sql(
-                            name=table_lower,
-                            con=pg_engine,
-                            if_exists='append',
-                            index=False
-                        )
-                    except SQLAlchemyError as e:
-                        logger.error(f"SQLAlchemy error writing table {table}: {str(e)}")
-                        raise
+                df.to_sql(
+                    name=table_lower,
+                    con=pg_engine,
+                    if_exists='append',
+                    index=False
+                )
                 
                 results.append({
                     "table": table,
@@ -203,7 +183,7 @@ def transfer_mdb_to_postgresql(mdb_path: str) -> List[Dict[str, Any]]:
                 progress_bar.progress(progress)
                 
             except Exception as e:
-                error_msg = f"Error processing table {table}: {str(e)}\n{traceback.format_exc()}"
+                error_msg = f"Error processing table {table}: {str(e)}"
                 logger.error(error_msg)
                 results.append({
                     "table": table,
@@ -215,17 +195,16 @@ def transfer_mdb_to_postgresql(mdb_path: str) -> List[Dict[str, Any]]:
         status_text.text("Processing complete!")
         
     except Exception as e:
-        error_msg = f"Transfer error: {str(e)}\n{traceback.format_exc()}"
+        error_msg = f"Transfer error: {str(e)}"
         logger.error(error_msg)
         results = [{
+            "table": "Unknown",
             "status": "Error",
+            "records": 0,
             "message": str(e)
         }]
     
     finally:
-        if conn:
-            conn.close()
-            logger.info("Closed Access database connection")
         if pg_engine:
             pg_engine.dispose()
             logger.info("Disposed PostgreSQL connection")
@@ -296,10 +275,10 @@ def main():
                                 
                                 st.markdown(f"""
                                     <div style='padding: 10px; border-left: 5px solid {status_color}; margin: 5px 0;'>
-                                        <strong>Table:</strong> {result['table']}<br>
-                                        <strong>Status:</strong> {result['status']}<br>
-                                        <strong>Records:</strong> {result['records']}<br>
-                                        <strong>Message:</strong> {result['message']}
+                                        <strong>Table:</strong> {result.get('table', 'Unknown')}<br>
+                                        <strong>Status:</strong> {result.get('status', 'Unknown')}<br>
+                                        <strong>Records:</strong> {result.get('records', 0)}<br>
+                                        <strong>Message:</strong> {result.get('message', '')}
                                     </div>
                                 """, unsafe_allow_html=True)
                     
