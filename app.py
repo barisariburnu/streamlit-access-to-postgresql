@@ -164,12 +164,36 @@ def transfer_mdb_to_postgresql(mdb_path: str) -> List[Dict[str, Any]]:
                 
                 # Write to PostgreSQL
                 table_lower = table.lower()
-                df.to_sql(
-                    name=table_lower,
-                    con=pg_engine,
-                    if_exists='append',
-                    index=False
-                )
+                
+                # ID kontrol� yap - e�er ID s�tunu varsa
+                if 'ID' in df.columns:
+                    # Mevcut ID'leri veritaban�ndan al
+                    existing_ids_query = f"SELECT \"ID\" FROM {table_lower}"
+                    try:
+                        existing_ids = pd.read_sql(existing_ids_query, pg_engine)["ID"].tolist()
+                        logger.info(f"Found {len(existing_ids)} existing IDs in table {table_lower}")
+                        
+                        # Sadece yeni kay�tlar� filtrele
+                        original_count = len(df)
+                        df = df[~df['ID'].isin(existing_ids)]
+                        filtered_count = original_count - len(df)
+                        
+                        if filtered_count > 0:
+                            logger.info(f"Filtered out {filtered_count} existing records from table {table_lower}")
+                    except Exception as e:
+                        # Tablo hen�z mevcut de�ilse veya ba�ka bir hata olu�ursa, devam et
+                        logger.warning(f"Could not check existing IDs in {table_lower}: {str(e)}")
+                
+                # Verileri ekle
+                if not df.empty:
+                    df.to_sql(
+                        name=table_lower,
+                        con=pg_engine,
+                        if_exists='append',
+                        index=False
+                    )
+                else:
+                    logger.info(f"No new records to add to {table_lower}")
                 
                 results.append({
                     "table": table,
