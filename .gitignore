@@ -37,7 +37,7 @@ uploads/
 # Logs
 *.log
 
-# Database
+# Database files (should not be in repo)
 *.mdb
 *.accdb
 *.db
@@ -45,3 +45,8 @@ uploads/
 
 # Secrets and configurations
 .streamlit/secrets.toml
+!.streamlit/secrets.toml.example
+
+# OS specific
+.DS_Store
+Thumbs.db

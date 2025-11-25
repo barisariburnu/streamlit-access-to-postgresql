@@ -1,9 +1,11 @@
 services:
-  streamlit_access_to_postgresql:
+  mdb-to-postgresql:
     build: .
-    container_name: streamlit_access_to_postgresql
+    container_name: mdb-to-postgresql
     restart: always
     ports:
       - "8501:8501"
     volumes:
       - .:/usr/src/app
+    environment:
+      - TZ=UTC

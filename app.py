@@ -99,7 +99,7 @@ def export_table_to_csv(mdb_path: str, table: str, output_path: str):
         if result.returncode != 0:
             raise RuntimeError(f"Error exporting table: {result.stderr}")
         
-        with open(output_path, 'w') as f:
+        with open(output_path, 'w', encoding='utf-8') as f:
             f.write(result.stdout)
         
     except Exception as e:
@@ -141,8 +141,8 @@ def transfer_mdb_to_postgresql(mdb_path: str) -> List[Dict[str, Any]]:
                 status_text.text(f"Processing table: {table}")
                 logger.info(f"Starting to process table: {table}")
                 
-                # Export to CSV temporarily
-                temp_csv = f"/tmp/{table}.csv"
+                # Export to CSV temporarily - use upload folder instead of /tmp
+                temp_csv = os.path.join(config.UPLOAD_FOLDER, f"{table}.csv")
                 export_table_to_csv(mdb_path, table, temp_csv)
                 
                 # Read CSV into DataFrame
@@ -165,15 +165,15 @@ def transfer_mdb_to_postgresql(mdb_path: str) -> List[Dict[str, Any]]:
                 # Write to PostgreSQL
                 table_lower = table.lower()
                 
-                # ID kontrol� yap - e�er ID s�tunu varsa
+                # Check for ID column - if exists, filter out existing records
                 if 'ID' in df.columns:
-                    # Mevcut ID'leri veritaban�ndan al
+                    # Get existing IDs from database
                     existing_ids_query = f"SELECT \"ID\" FROM {table_lower}"
                     try:
                         existing_ids = pd.read_sql(existing_ids_query, pg_engine)["ID"].tolist()
                         logger.info(f"Found {len(existing_ids)} existing IDs in table {table_lower}")
                         
-                        # Sadece yeni kay�tlar� filtrele
+                        # Filter only new records
                         original_count = len(df)
                         df = df[~df['ID'].isin(existing_ids)]
                         filtered_count = original_count - len(df)
@@ -181,10 +181,10 @@ def transfer_mdb_to_postgresql(mdb_path: str) -> List[Dict[str, Any]]:
                         if filtered_count > 0:
                             logger.info(f"Filtered out {filtered_count} existing records from table {table_lower}")
                     except Exception as e:
-                        # Tablo hen�z mevcut de�ilse veya ba�ka bir hata olu�ursa, devam et
+                        # If table doesn't exist yet or another error occurs, continue
                         logger.warning(f"Could not check existing IDs in {table_lower}: {str(e)}")
                 
-                # Verileri ekle
+                # Insert data
                 if not df.empty:
                     df.to_sql(
                         name=table_lower,
