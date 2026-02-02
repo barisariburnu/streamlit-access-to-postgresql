@@ -20,6 +20,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the rest of the application
 COPY . .
 
+# Copy startup script
+COPY startup.sh .
+RUN chmod +x startup.sh
+
 # Create required directories
 RUN mkdir -p /usr/src/app/uploads
 
@@ -30,4 +34,4 @@ EXPOSE 8501
 
 HEALTHCHECK CMD curl --fail http://localhost:8501/_stcore/health
 
-ENTRYPOINT ["streamlit", "run", "app.py", "--server.address=0.0.0.0"]
+CMD ["./startup.sh"]
