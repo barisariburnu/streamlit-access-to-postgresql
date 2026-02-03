@@ -1,16 +1,23 @@
 #!/bin/bash
 set -e
 
-echo "Creating secrets file..."
-mkdir -p .streamlit
+# Use user's home directory for secrets to avoid permission issues with bind mounts
+SECRETS_DIR="$HOME/.streamlit"
+mkdir -p "$SECRETS_DIR"
 
-cat > .streamlit/secrets.toml << EOF
-[postgresql]
+echo "Creating secrets file at $SECRETS_DIR/secrets.toml..."
+
+cat > "$SECRETS_DIR/secrets.toml" << EOF
+[postgres]
 host = "${DB_HOST}"
 port = "${DB_PORT}"
 database = "${DB_NAME}"
 user = "${DB_USER}"
 password = "${DB_PASSWORD}"
+
+[app]
+max_file_size = 1073741824
+upload_folder = "/home/appuser/uploads"
 EOF
 
 echo "Secrets file created successfully"
