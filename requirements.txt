@@ -1,6 +1,13 @@
-numpy>=1.24.3
-pandas==2.0.3
-SQLAlchemy==2.0.36
-streamlit==1.40.1
+# Core dependencies
+streamlit==1.31.1
+pandas==2.2.0
+numpy==1.26.4
+
+# Database drivers
 psycopg2-binary==2.9.9
-watchdog==3.0.0  # For file monitoring
+SQLAlchemy==2.0.25
+pyodbc==5.0.1
+
+# Optional: Add other dependencies you need
+# openpyxl==3.1.2  # For Excel support
+# pillow==10.2.0   # For image support

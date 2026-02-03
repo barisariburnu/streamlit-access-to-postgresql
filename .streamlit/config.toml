@@ -10,8 +10,10 @@ base = "dark"  # Sets dark mode as default
 gatherUsageStats = false
 
 [server]
-enableCORS = false
+enableCORS = true
 enableXsrfProtection = true
+port = 8501
+address = "0.0.0.0"
 
 [ui]
 hideTopBar = true  # Hides the deploy menu and other options
