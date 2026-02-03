@@ -46,6 +46,7 @@ uploads/
 # Secrets and configurations
 .streamlit/secrets.toml
 !.streamlit/secrets.toml.example
+.env
 
 # OS specific
 .DS_Store

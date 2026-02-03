@@ -3,19 +3,20 @@ import streamlit as st
 
 class Config:
     # Database settings from secrets.toml
-    PG_USER = st.secrets["postgres"]["user"]
-    PG_PASSWORD = st.secrets["postgres"]["password"]
-    PG_HOST = st.secrets["postgres"]["host"]
-    PG_PORT = st.secrets["postgres"]["port"]
-    PG_DATABASE = st.secrets["postgres"]["database"]
+    db_config = st.secrets.get("postgres", {})
+    PG_USER = db_config.get("user")
+    PG_PASSWORD = db_config.get("password")
+    PG_HOST = db_config.get("host")
+    PG_PORT = db_config.get("port")
+    PG_DATABASE = db_config.get("database")
     
     # Construct database URL
     PG_CONNECTION_STRING = f"postgresql://{PG_USER}:{PG_PASSWORD}@{PG_HOST}:{PG_PORT}/{PG_DATABASE}"
-    print(f"Database URL: {PG_CONNECTION_STRING}")
     
     # Application settings from secrets.toml
-    MAX_FILE_SIZE = st.secrets["app"]["max_file_size"]
-    UPLOAD_FOLDER = st.secrets["app"]["upload_folder"]
+    app_config = st.secrets.get("app", {})
+    MAX_FILE_SIZE = app_config.get("max_file_size")
+    UPLOAD_FOLDER = app_config.get("upload_folder")
     
     # Ensure upload directory exists
     if not os.path.exists(UPLOAD_FOLDER):
