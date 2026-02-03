@@ -56,12 +56,15 @@ RUN chmod +x startup.sh
 # appuser needs write access to .streamlit for secrets.toml creation in startup.sh
 RUN mkdir -p /usr/src/app/uploads \
     && mkdir -p /usr/src/app/.streamlit \
-    && chmod -R 755 /usr/src/app \
-    && chmod 644 /usr/src/app/.streamlit/config.toml
+    && chmod -R 755 /usr/src/app
 
 # Create non-root user for security
 RUN useradd -m -u 1001 appuser && \
-    chown -R appuser:appuser /usr/src/app
+    chown -R appuser:appuser /usr/src/app && \
+    chmod 775 /usr/src/app/.streamlit
+
+# Set HOME environment variable explicitly for container environments
+ENV HOME=/home/appuser
 
 # Switch to non-root user
 USER appuser
