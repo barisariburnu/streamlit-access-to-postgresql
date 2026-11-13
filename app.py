@@ -4,12 +4,17 @@ from sqlalchemy import create_engine, text
 import os
 import warnings
 import traceback
+import tempfile
 import logging
 from typing import List, Dict, Any
 from config import config
 import psycopg2
 import subprocess
-from sqlalchemy.exc import SQLAlchemyError
+from mdb_sync import synchronize_table, validate_source_tables
+from upload_audit import (
+    ensure_audit_tables, create_upload, start_upload,
+    record_table_result, finish_upload,
+)
 
 # Set up detailed logging
 logging.basicConfig(
@@ -106,134 +111,100 @@ def export_table_to_csv(mdb_path: str, table: str, output_path: str):
         logger.error(f"Error exporting table {table}: {str(e)}")
         raise
 
-def transfer_mdb_to_postgresql(mdb_path: str) -> List[Dict[str, Any]]:
-    """Transfer data from Access database to PostgreSQL using MDBTools."""
+def register_uploaded_file(uploaded_file, engine) -> str:
+    """Log each file selection once, retaining its identity through UI reruns."""
+    previous = st.session_state.get("mdb_upload_log")
+    if previous and previous["file_id"] == uploaded_file.file_id:
+        return previous["upload_id"]
+    ensure_audit_tables(engine)
+    upload_id = create_upload(engine, uploaded_file.name, uploaded_file.size)
+    st.session_state["mdb_upload_log"] = {
+        "file_id": uploaded_file.file_id, "upload_id": upload_id,
+    }
+    return upload_id
+
+
+def transfer_mdb_to_postgresql(mdb_path: str, upload_id=None) -> List[Dict[str, Any]]:
+    """Transfer tables and persist each result atomically with its data."""
     results = []
     pg_engine = None
-    
+    active_upload_id = None
+    transfer_error = None
+
     try:
-        logger.info(f"Starting transfer from {mdb_path}")
-        
-        # Test PostgreSQL connection first
+        pg_engine = create_engine(config.PG_CONNECTION_STRING)
+        ensure_audit_tables(pg_engine)
+        if upload_id is None:
+            upload_id = create_upload(
+                pg_engine, os.path.basename(mdb_path), os.path.getsize(mdb_path)
+            )
+        active_upload_id = start_upload(pg_engine, upload_id)
+
         pg_success, pg_message = test_postgresql_connection()
         if not pg_success:
             raise RuntimeError(f"PostgreSQL connection test failed: {pg_message}")
-        
-        # Check for MDBTools
         check_mdb_tools()
-        
-        # Get tables
         tables = get_tables(mdb_path)
-        logger.info(f"Found {len(tables)} tables: {tables}")
-        
         if not tables:
             raise ValueError("No tables found in the database")
-        
-        # Create PostgreSQL engine
-        pg_engine = create_engine(config.PG_CONNECTION_STRING)
-        
-        # Process each table
+        validate_source_tables(tables)
+
         progress_bar = st.progress(0)
         status_text = st.empty()
-        
-        for idx, table in enumerate(tables):
-            try:
-                status_text.text(f"Processing table: {table}")
-                logger.info(f"Starting to process table: {table}")
-                
-                # Export to CSV temporarily - use upload folder instead of /tmp
-                temp_csv = os.path.join(config.UPLOAD_FOLDER, f"{table}.csv")
-                export_table_to_csv(mdb_path, table, temp_csv)
-                
-                # Read CSV into DataFrame
-                df = pd.read_csv(temp_csv, low_memory=False)
-                logger.info(f"Read {len(df)} rows from table {table}")
-                
-                # Remove temporary CSV
-                if os.path.exists(temp_csv):
+        # Separate temporary files for concurrent uploads and arbitrary table names.
+        with tempfile.TemporaryDirectory(dir=config.UPLOAD_FOLDER) as work_dir:
+            for idx, table in enumerate(tables):
+                result = {
+                    "table": table, "target_table": table.lower(),
+                    "status": "Error", "records": 0, "source_records": 0,
+                    "skipped_records": 0, "deactivated_records": 0,
+                    "reactivated_records": 0, "message": "",
+                }
+                try:
+                    status_text.text(f"Processing table: {table}")
+                    temp_csv = os.path.join(work_dir, f"table_{idx}.csv")
+                    export_table_to_csv(mdb_path, table, temp_csv)
+                    df = pd.read_csv(temp_csv, low_memory=False)
                     os.remove(temp_csv)
-                
-                if df.empty:
-                    results.append({
-                        "table": table,
-                        "status": "Skipped",
-                        "records": 0,
-                        "message": "Empty table"
-                    })
-                    continue
-                
-                # Write to PostgreSQL
-                table_lower = table.lower()
-                
-                # Check for ID column - if exists, filter out existing records
-                if 'ID' in df.columns:
-                    # Get existing IDs from database
-                    existing_ids_query = f"SELECT \"ID\" FROM {table_lower}"
-                    try:
-                        existing_ids = pd.read_sql(existing_ids_query, pg_engine)["ID"].tolist()
-                        logger.info(f"Found {len(existing_ids)} existing IDs in table {table_lower}")
-                        
-                        # Filter only new records
-                        original_count = len(df)
-                        df = df[~df['ID'].isin(existing_ids)]
-                        filtered_count = original_count - len(df)
-                        
-                        if filtered_count > 0:
-                            logger.info(f"Filtered out {filtered_count} existing records from table {table_lower}")
-                    except Exception as e:
-                        # If table doesn't exist yet or another error occurs, continue
-                        logger.warning(f"Could not check existing IDs in {table_lower}: {str(e)}")
-                
-                # Insert data
-                if not df.empty:
-                    df.to_sql(
-                        name=table_lower,
-                        con=pg_engine,
-                        if_exists='append',
-                        index=False
+                    result["source_records"] = len(df)
+
+                    with pg_engine.begin() as connection:
+                        result.update(synchronize_table(connection, table.lower(), df))
+                        record_table_result(connection, active_upload_id, result)
+                except Exception as exc:
+                    # Any insert and its success log have rolled back together.
+                    logger.exception("Error processing table %s", table)
+                    result.update(
+                        status="Error", records=0, deactivated_records=0,
+                        reactivated_records=0, message=str(exc),
                     )
-                else:
-                    logger.info(f"No new records to add to {table_lower}")
-                
-                results.append({
-                    "table": table,
-                    "status": "Success",
-                    "records": len(df),
-                    "message": "Transferred successfully"
-                })
-                
-                # Update progress
-                progress = (idx + 1) / len(tables)
-                progress_bar.progress(progress)
-                
-            except Exception as e:
-                error_msg = f"Error processing table {table}: {str(e)}"
-                logger.error(error_msg)
-                results.append({
-                    "table": table,
-                    "status": "Error",
-                    "records": 0,
-                    "message": str(e)
-                })
-        
+                    with pg_engine.begin() as connection:
+                        record_table_result(connection, active_upload_id, result)
+                results.append(result)
+                progress_bar.progress((idx + 1) / len(tables))
         status_text.text("Processing complete!")
-        
-    except Exception as e:
-        error_msg = f"Transfer error: {str(e)}"
-        logger.error(error_msg)
-        results = [{
-            "table": "Unknown",
-            "status": "Error",
-            "records": 0,
-            "message": str(e)
-        }]
-    
+    except Exception as exc:
+        transfer_error = str(exc)
+        logger.exception("Transfer error")
+        results.append({
+            "table": "Unknown", "status": "Error", "records": 0,
+            "message": transfer_error,
+        })
     finally:
-        if pg_engine:
-            pg_engine.dispose()
-            logger.info("Disposed PostgreSQL connection")
-    
+        if pg_engine is not None:
+            try:
+                if active_upload_id is not None:
+                    finish_upload(pg_engine, active_upload_id, transfer_error)
+            except Exception as exc:
+                logger.exception("Could not finalize upload history")
+                results.append({
+                    "table": "Upload log", "status": "Error", "records": 0,
+                    "message": f"Could not finalize upload history: {exc}",
+                })
+            finally:
+                pg_engine.dispose()
     return results
+
 
 def main():
     # Set page config
@@ -265,22 +236,31 @@ def main():
     # File uploader
     uploaded_file = st.file_uploader("Choose an Access database file", type=['mdb'])
     
+    if not uploaded_file:
+        st.session_state.pop("mdb_upload_log", None)
+
     if uploaded_file:
         if not check_file_size(uploaded_file):
             st.error("File size exceeds maximum limit (1GB)")
             return
         
         try:
-            # Save uploaded file
-            file_path = os.path.join(config.UPLOAD_FOLDER, uploaded_file.name)
-            with open(file_path, "wb") as f:
-                f.write(uploaded_file.getvalue())
-            
+            audit_engine = create_engine(config.PG_CONNECTION_STRING)
+            try:
+                upload_id = register_uploaded_file(uploaded_file, audit_engine)
+            finally:
+                audit_engine.dispose()
+
             # Process file when user clicks the button
             if st.button("Start Transfer"):
+                with tempfile.NamedTemporaryFile(
+                    dir=config.UPLOAD_FOLDER, suffix=".mdb", delete=False
+                ) as file:
+                    file_path = file.name
+                    file.write(uploaded_file.getbuffer())
                 with st.spinner("Processing..."):
                     try:
-                        results = transfer_mdb_to_postgresql(file_path)
+                        results = transfer_mdb_to_postgresql(file_path, upload_id)
                         
                         # Display results in an expandable section
                         if any(result["status"] == "Error" for result in results):
@@ -302,6 +282,8 @@ def main():
                                         <strong>Table:</strong> {result.get('table', 'Unknown')}<br>
                                         <strong>Status:</strong> {result.get('status', 'Unknown')}<br>
                                         <strong>Records:</strong> {result.get('records', 0)}<br>
+                                        <strong>Moved to passive:</strong> {result.get('deactivated_records', 0)}<br>
+                                        <strong>Reactivated:</strong> {result.get('reactivated_records', 0)}<br>
                                         <strong>Message:</strong> {result.get('message', '')}
                                     </div>
                                 """, unsafe_allow_html=True)

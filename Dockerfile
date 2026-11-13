@@ -23,14 +23,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy and install Python dependencies first (better layer caching)
 # This layer only rebuilds when requirements.txt changes
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Streamlit 1.31 requires packaging<24; newer wheel releases require packaging>=24.
+RUN pip install --no-cache-dir "wheel<0.46" -r requirements.txt \
+    && pip check
 
 # Create required directories before copying app code
 RUN mkdir -p /usr/src/app/uploads /usr/src/app/.streamlit
 
 # Copy application code
 # Using specific COPY commands for better cache utilization
-COPY app.py config.py ./
+COPY app.py config.py upload_audit.py mdb_sync.py ./
 COPY .streamlit/config.toml .streamlit/
 COPY startup.sh .
 

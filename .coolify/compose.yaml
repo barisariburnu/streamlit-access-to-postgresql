@@ -1,0 +1,56 @@
+# Coolify: Base Directory /, Compose Location /.coolify/compose.yaml, RAW mode.
+services:
+  mdb-to-postgresql:
+    command: null
+    entrypoint: null
+    environment:
+      DB_PORT: ${ESTATE_MDB_TO_POSTGRESQL_DB_PORT}
+      DB_NAME: ${ESTATE_MDB_TO_POSTGRESQL_DB_NAME}
+      DB_USER: ${ESTATE_MDB_TO_POSTGRESQL_DB_USER}
+      DB_PASSWORD: ${ESTATE_MDB_TO_POSTGRESQL_DB_PASSWORD}
+      TZ: ${ESTATE_MDB_TO_POSTGRESQL_TZ}
+      DB_HOST: ${ESTATE_MDB_TO_POSTGRESQL_DB_HOST}
+      PATH: ${ESTATE_MDB_TO_POSTGRESQL_PATH}
+      LANG: ${ESTATE_MDB_TO_POSTGRESQL_LANG}
+      GPG_KEY: ${ESTATE_MDB_TO_POSTGRESQL_GPG_KEY}
+      PYTHON_VERSION: ${ESTATE_MDB_TO_POSTGRESQL_PYTHON_VERSION}
+      PYTHON_SHA256: ${ESTATE_MDB_TO_POSTGRESQL_PYTHON_SHA256}
+      PYTHONDONTWRITEBYTECODE: ${ESTATE_MDB_TO_POSTGRESQL_PYTHONDONTWRITEBYTECODE}
+      PYTHONUNBUFFERED: ${ESTATE_MDB_TO_POSTGRESQL_PYTHONUNBUFFERED}
+      PIP_NO_CACHE_DIR: ${ESTATE_MDB_TO_POSTGRESQL_PIP_NO_CACHE_DIR}
+      PIP_DISABLE_PIP_VERSION_CHECK: ${ESTATE_MDB_TO_POSTGRESQL_PIP_DISABLE_PIP_VERSION_CHECK}
+    ports:
+    - 8501:8501/tcp
+    restart: always
+    volumes:
+    - type: bind
+      source: ${COOLIFY_UPLOADS_PATH}
+      target: /usr/src/app/uploads
+      bind:
+        create_host_path: false
+    image: coolify-local/streamlit-access-to-postgresql:${SOURCE_COMMIT:-latest}
+    pull_policy: never
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+    container_name: mdb-to-postgresql-${COOLIFY_RESOURCE_UUID:?}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    labels:
+    - traefik.docker.network=${COOLIFY_RESOURCE_UUID}
+    - traefik.enable=true
+    - traefik.http.middlewares.gzip-sse.compress.excludedcontenttypes=text/event-stream
+    - traefik.http.middlewares.redirect-to-https.redirectscheme.scheme=https
+    - traefik.http.routers.http-0-${COOLIFY_RESOURCE_UUID}-mdb-to-postgresql-a2e6.entryPoints=http
+    - traefik.http.routers.http-0-${COOLIFY_RESOURCE_UUID}-mdb-to-postgresql-a2e6.middlewares=gzip-sse
+    - traefik.http.routers.http-0-${COOLIFY_RESOURCE_UUID}-mdb-to-postgresql-a2e6.rule=Host(`${COOLIFY_PUBLIC_HOST:?}`) && PathPrefix(`/`)
+    - traefik.http.routers.http-0-${COOLIFY_RESOURCE_UUID}-mdb-to-postgresql-a2e6.service=http-0-${COOLIFY_RESOURCE_UUID}-mdb-to-postgresql-a2e6
+    - traefik.http.services.http-0-${COOLIFY_RESOURCE_UUID}-mdb-to-postgresql-a2e6.loadbalancer.server.port=8501
+name: ${COOLIFY_RESOURCE_UUID:?}
+networks:
+  default:
+    external: true
+    name: ${COOLIFY_RESOURCE_UUID:?}
