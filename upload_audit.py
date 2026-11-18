@@ -36,6 +36,10 @@ table_results = Table(
 )
 
 
+class UploadInProgress(RuntimeError):
+    """An existing transfer still owns this upload attempt."""
+
+
 def ensure_audit_tables(engine):
     """Create MDB log tables in the existing public schema on first use."""
     with engine.begin() as connection:
@@ -72,7 +76,7 @@ def start_upload(engine, upload_id):
             select(uploads).where(uploads.c.id == upload_id).with_for_update()
         ).mappings().one()
         if upload["status"] == "In Progress":
-            raise RuntimeError("This upload is already being transferred")
+            raise UploadInProgress("This upload is already being transferred")
         if upload["status"] != "Uploaded":
             upload_id = str(uuid4())
             connection.execute(uploads.insert().values(

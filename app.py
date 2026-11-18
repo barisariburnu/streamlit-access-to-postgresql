@@ -13,6 +13,7 @@ import psycopg2
 import subprocess
 from mdb_sync import synchronize_table, validate_source_tables
 from upload_audit import (
+    UploadInProgress,
     ensure_audit_tables, create_upload, start_upload,
     record_table_result, finish_upload,
 )
@@ -188,7 +189,7 @@ def transfer_mdb_to_postgresql(mdb_path: str, upload_id=None) -> List[Dict[str, 
                 progress_bar.progress((idx + 1) / len(tables))
         status_text.text("Processing complete!")
     except Exception as exc:
-        report(exc, 'upload_failed', expected=(ValueError,))
+        report(exc, 'upload_failed', expected=(ValueError, UploadInProgress))
         transfer_error = str(exc)
         logger.exception("Transfer error")
         results.append({

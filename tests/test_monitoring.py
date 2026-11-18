@@ -114,6 +114,54 @@ class MonitoringTests(unittest.TestCase):
             app.transfer_mdb_to_postgresql("unused")
         self.assertEqual(len(monitor.client.transport.events), 1)
 
+    def test_real_in_progress_upload_conflict_is_silent_and_preserves_active_attempt(self):
+        from types import SimpleNamespace
+        from sqlalchemy import create_engine, event, select
+        import upload_audit as audit
+
+        engine = create_engine("sqlite://")
+        self.addCleanup(engine.dispose)
+
+        @event.listens_for(engine, "connect")
+        def attach_public(connection, _):
+            connection.execute("ATTACH DATABASE ':memory:' AS public")
+
+        audit.ensure_audit_tables(engine)
+        upload_id = audit.create_upload(engine, "synthetic.mdb", 10)
+        self.assertEqual(audit.start_upload(engine, upload_id), upload_id)
+        with patch.dict(sys.modules, {"config": SimpleNamespace(config=SimpleNamespace(PG_CONNECTION_STRING="unused"))}):
+            sys.modules.pop("app", None)
+            app = importlib.import_module("app")
+        monitor = self.monitor()
+        with patch.object(self.m, "get_monitor", return_value=monitor), \
+                patch.object(app, "create_engine", return_value=engine), \
+                patch.object(engine, "dispose"), patch.object(app, "logger"), \
+                patch.object(app, "test_postgresql_connection") as connection_check, \
+                patch.object(app, "check_mdb_tools") as tools_check, \
+                patch.object(app, "get_tables") as get_tables:
+            result = app.transfer_mdb_to_postgresql("unused", upload_id)
+        self.assertEqual(result[0]["status"], "Error")
+        self.assertEqual(result[0]["message"], "This upload is already being transferred")
+        self.assertEqual(monitor.client.transport.events, [])
+        connection_check.assert_not_called()
+        tools_check.assert_not_called()
+        get_tables.assert_not_called()
+        with engine.connect() as connection:
+            rows = connection.execute(select(audit.uploads)).mappings().all()
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["id"], upload_id)
+            self.assertEqual(rows[0]["status"], "In Progress")
+            self.assertIsNone(rows[0]["completed_at"])
+            self.assertEqual(connection.execute(select(audit.table_results)).all(), [])
+        with self.assertRaises(RuntimeError) as conflict:
+            audit.start_upload(engine, upload_id)
+        self.assertEqual(type(conflict.exception).__name__, "UploadInProgress")
+        with patch.object(self.m, "get_monitor", return_value=monitor), \
+                patch.object(app, "create_engine", side_effect=RuntimeError("This upload is already being transferred")), \
+                patch.object(app, "logger"):
+            app.transfer_mdb_to_postgresql("unused", upload_id)
+        self.assertEqual(len(monitor.client.transport.events), 1)
+
     def test_build_reads_only_source_commit_without_evaluating_other_fields(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
