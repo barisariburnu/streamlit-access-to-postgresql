@@ -1,3 +1,4 @@
+from monitoring import report, run_guarded
 import streamlit as st
 import pandas as pd
 from sqlalchemy import create_engine, text
@@ -23,7 +24,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-def test_postgresql_connection():
+def test_postgresql_connection(*, report_failure=True):
     """Test PostgreSQL connection and log detailed information."""
     try:
         # Try direct psycopg2 connection first
@@ -51,6 +52,8 @@ def test_postgresql_connection():
         return True, "Connection successful"
     
     except Exception as e:
+        if report_failure:
+            report(e)
         error_msg = f"PostgreSQL connection error: {str(e)}\n{traceback.format_exc()}"
         logger.error(error_msg)
         return False, error_msg
@@ -140,7 +143,7 @@ def transfer_mdb_to_postgresql(mdb_path: str, upload_id=None) -> List[Dict[str, 
             )
         active_upload_id = start_upload(pg_engine, upload_id)
 
-        pg_success, pg_message = test_postgresql_connection()
+        pg_success, pg_message = test_postgresql_connection(report_failure=False)
         if not pg_success:
             raise RuntimeError(f"PostgreSQL connection test failed: {pg_message}")
         check_mdb_tools()
@@ -172,6 +175,7 @@ def transfer_mdb_to_postgresql(mdb_path: str, upload_id=None) -> List[Dict[str, 
                         result.update(synchronize_table(connection, table.lower(), df))
                         record_table_result(connection, active_upload_id, result)
                 except Exception as exc:
+                    report(exc, 'upload_failed', expected=(ValueError,))
                     # Any insert and its success log have rolled back together.
                     logger.exception("Error processing table %s", table)
                     result.update(
@@ -184,6 +188,7 @@ def transfer_mdb_to_postgresql(mdb_path: str, upload_id=None) -> List[Dict[str, 
                 progress_bar.progress((idx + 1) / len(tables))
         status_text.text("Processing complete!")
     except Exception as exc:
+        report(exc, 'upload_failed', expected=(ValueError,))
         transfer_error = str(exc)
         logger.exception("Transfer error")
         results.append({
@@ -196,6 +201,7 @@ def transfer_mdb_to_postgresql(mdb_path: str, upload_id=None) -> List[Dict[str, 
                 if active_upload_id is not None:
                     finish_upload(pg_engine, active_upload_id, transfer_error)
             except Exception as exc:
+                report(exc, 'upload_audit_failed')
                 logger.exception("Could not finalize upload history")
                 results.append({
                     "table": "Upload log", "status": "Error", "records": 0,
@@ -289,6 +295,7 @@ def main():
                                 """, unsafe_allow_html=True)
                     
                     except Exception as e:
+                        report(e, 'upload_failed', expected=(ValueError,))
                         st.error(f"Error during transfer: {str(e)}")
                         logger.error(f"Transfer error: {str(e)}\n{traceback.format_exc()}")
                     
@@ -298,10 +305,11 @@ def main():
                             os.remove(file_path)
         
         except Exception as e:
+            report(e, 'upload_failed', expected=(ValueError,))
             st.error(f"Error processing file: {str(e)}")
             logger.error(f"File processing error: {str(e)}\n{traceback.format_exc()}")
             if 'file_path' in locals() and os.path.exists(file_path):
                 os.remove(file_path)
 
 if __name__ == "__main__":
-    main()
+    run_guarded(main)

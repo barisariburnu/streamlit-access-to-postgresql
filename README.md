@@ -17,3 +17,8 @@ GitHub `main` branch’i, Docker Compose Application olarak bağlanır. Deployme
 ## Doğrulama
 
 `python -m unittest discover -s tests -v` komutu veri eşleştirme ve yükleme denetimi testlerini çalıştırır. PostgreSQL entegrasyon testleri yalnız ayrı bir test sunucusuna bağlanacak şekilde yapılandırılmalıdır; üretim veritabanı test hedefi olarak kullanılmamalıdır.
+
+## GlitchTip hata izleme
+
+Gizlilik sınırı, runtime değişkenleri ve sentetik kontrol komutu için
+[operasyon notlarını](.coolify/README.md#glitchtip) inceleyin.

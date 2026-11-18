@@ -4,6 +4,8 @@ services:
     command: null
     entrypoint: null
     environment:
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-production}
       DB_PORT: ${ESTATE_MDB_TO_POSTGRESQL_DB_PORT}
       DB_NAME: ${ESTATE_MDB_TO_POSTGRESQL_DB_NAME}
       DB_USER: ${ESTATE_MDB_TO_POSTGRESQL_DB_USER}
@@ -28,7 +30,7 @@ services:
       target: /usr/src/app/uploads
       bind:
         create_host_path: false
-    image: coolify-local/streamlit-access-to-postgresql:${SOURCE_COMMIT:-latest}
+    image: coolify-local/streamlit-access-to-postgresql:latest
     pull_policy: never
     logging:
       driver: json-file
